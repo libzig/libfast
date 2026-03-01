@@ -1267,6 +1267,67 @@ test "ack frame decode rejects truncated ECN counts" {
     try std.testing.expectError(error.UnexpectedEof, AckFrame.decode(buf[0 .. len - 1]));
 }
 
+test "ack frame decode rejects truncation across ACK range section" {
+    var buf: [256]u8 = undefined;
+    const frame = AckFrame{
+        .largest_acked = 600,
+        .ack_delay = 3,
+        .first_ack_range = 5,
+        .ack_ranges = &[_]AckFrame.AckRange{
+            .{ .gap = 1, .ack_range_length = 2 },
+            .{ .gap = 3, .ack_range_length = 4 },
+            .{ .gap = 5, .ack_range_length = 6 },
+        },
+        .ecn_counts = null,
+    };
+
+    const len = try frame.encode(&buf);
+    var ranges: [8]AckFrame.AckRange = undefined;
+
+    var cut: usize = 1;
+    while (cut < len) : (cut += 1) {
+        try std.testing.expectError(error.UnexpectedEof, AckFrame.decodeWithAckRanges(buf[0..cut], &ranges));
+    }
+
+    const decoded = try AckFrame.decodeWithAckRanges(buf[0..len], &ranges);
+    try std.testing.expectEqual(@as(usize, 3), decoded.frame.ack_ranges.len);
+}
+
+test "ack frame decode rejects all ECN tail truncation variants" {
+    var with_ecn_buf: [128]u8 = undefined;
+    const with_ecn = AckFrame{
+        .largest_acked = 9,
+        .ack_delay = 1,
+        .first_ack_range = 0,
+        .ack_ranges = &.{},
+        .ecn_counts = AckFrame.EcnCounts{
+            .ect0_count = 1,
+            .ect1_count = 2,
+            .ecn_ce_count = 3,
+        },
+    };
+    const with_ecn_len = try with_ecn.encode(&with_ecn_buf);
+
+    var no_ecn_buf: [128]u8 = undefined;
+    const no_ecn = AckFrame{
+        .largest_acked = 9,
+        .ack_delay = 1,
+        .first_ack_range = 0,
+        .ack_ranges = &.{},
+        .ecn_counts = null,
+    };
+    const no_ecn_len = try no_ecn.encode(&no_ecn_buf);
+
+    // Every prefix that includes ACK fields but not full ECN tail must fail.
+    var cut: usize = no_ecn_len;
+    while (cut < with_ecn_len) : (cut += 1) {
+        try std.testing.expectError(error.UnexpectedEof, AckFrame.decode(with_ecn_buf[0..cut]));
+    }
+
+    const decoded = try AckFrame.decode(with_ecn_buf[0..with_ecn_len]);
+    try std.testing.expect(decoded.frame.ecn_counts != null);
+}
+
 test "ack frame decode reports ack range output overflow" {
     var buf: [128]u8 = undefined;
     const frame = AckFrame{
