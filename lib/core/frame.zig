@@ -1323,6 +1323,36 @@ test "ack frame decode supports lsquic-scale range vectors" {
     try std.testing.expectError(error.BufferTooSmall, AckFrame.decodeWithAckRanges(buf[0..len], &small_out));
 }
 
+test "ack frame decode supports lsquic sparse history pattern" {
+    var ranges_in: [256]AckFrame.AckRange = undefined;
+    for (&ranges_in) |*range| {
+        range.* = .{
+            .gap = 8,
+            .ack_range_length = 0,
+        };
+    }
+
+    const frame = AckFrame{
+        .largest_acked = 3_000,
+        .ack_delay = 0,
+        .first_ack_range = 0,
+        .ack_ranges = ranges_in[0..],
+        .ecn_counts = null,
+    };
+
+    var buf: [4096]u8 = undefined;
+    const len = try frame.encode(&buf);
+
+    var decoded_ranges: [256]AckFrame.AckRange = undefined;
+    const decoded = try AckFrame.decodeWithAckRanges(buf[0..len], &decoded_ranges);
+    try std.testing.expectEqual(@as(usize, 256), decoded.frame.ack_ranges.len);
+
+    for (decoded.frame.ack_ranges) |range| {
+        try std.testing.expectEqual(@as(u64, 8), range.gap);
+        try std.testing.expectEqual(@as(u64, 0), range.ack_range_length);
+    }
+}
+
 test "new connection id decode rejects invalid cid lengths" {
     var buf: [128]u8 = undefined;
     const cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });

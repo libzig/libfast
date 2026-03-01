@@ -677,8 +677,11 @@ test "packet number decode lsquic compatibility vectors" {
     }{
         // Derived from LSQUIC test_packno_len restore vectors (least_unacked=2).
         .{ .truncated = &[_]u8{0x41}, .largest_acked = 1, .expected = 65 },
+        .{ .truncated = &[_]u8{0x02}, .largest_acked = 0, .expected = 2 },
         .{ .truncated = &[_]u8{ 0x3F, 0xFF }, .largest_acked = 1, .expected = 64 * 256 - 1 },
         .{ .truncated = &[_]u8{ 0x00, 0x3F, 0xFF, 0xFF }, .largest_acked = 1, .expected = 64 * 256 * 256 - 1 },
+        .{ .truncated = &[_]u8{ 0x00, 0x01 }, .largest_acked = (1 << 16) - 1, .expected = (1 << 16) + 1 },
+        .{ .truncated = &[_]u8{ 0x00, 0x00, 0x00, 0x01 }, .largest_acked = (1 << 33) - 1, .expected = (1 << 33) + 1 },
 
         // Additional restore case where high bits come from the expected window.
         .{ .truncated = &[_]u8{ 0x27, 0x11 }, .largest_acked = 9_999, .expected = 10_001 },
