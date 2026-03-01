@@ -1285,6 +1285,44 @@ test "ack frame decode reports ack range output overflow" {
     try std.testing.expectError(error.BufferTooSmall, AckFrame.decodeWithAckRanges(buf[0..len], &ranges));
 }
 
+test "ack frame decode supports lsquic-scale range vectors" {
+    var ranges_in: [256]AckFrame.AckRange = undefined;
+    for (ranges_in[0..], 0..) |*range, i| {
+        range.* = .{
+            .gap = @as(u64, @intCast(i % 2)),
+            .ack_range_length = @as(u64, @intCast(i % 3)),
+        };
+    }
+
+    // Ensure the full range chain remains valid under decode invariants.
+    var current_smallest: u64 = 5_000;
+    const first_ack_range: u64 = 200;
+    current_smallest -= first_ack_range;
+    for (ranges_in) |range| {
+        const step = range.gap + 2;
+        current_smallest -= step;
+        current_smallest -= range.ack_range_length;
+    }
+
+    const frame = AckFrame{
+        .largest_acked = 5_000,
+        .ack_delay = 0,
+        .first_ack_range = first_ack_range,
+        .ack_ranges = ranges_in[0..],
+        .ecn_counts = null,
+    };
+
+    var buf: [4096]u8 = undefined;
+    const len = try frame.encode(&buf);
+
+    var decoded_ranges: [256]AckFrame.AckRange = undefined;
+    const decoded = try AckFrame.decodeWithAckRanges(buf[0..len], &decoded_ranges);
+    try std.testing.expectEqual(@as(usize, 256), decoded.frame.ack_ranges.len);
+
+    var small_out: [255]AckFrame.AckRange = undefined;
+    try std.testing.expectError(error.BufferTooSmall, AckFrame.decodeWithAckRanges(buf[0..len], &small_out));
+}
+
 test "new connection id decode rejects invalid cid lengths" {
     var buf: [128]u8 = undefined;
     const cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });

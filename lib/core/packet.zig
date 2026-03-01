@@ -669,6 +669,27 @@ test "packet number decode reconstruction window edges" {
     try std.testing.expectEqual(@as(u64, 0x221), stable);
 }
 
+test "packet number decode lsquic compatibility vectors" {
+    const vectors = [_]struct {
+        truncated: []const u8,
+        largest_acked: u64,
+        expected: u64,
+    }{
+        // Derived from LSQUIC test_packno_len restore vectors (least_unacked=2).
+        .{ .truncated = &[_]u8{0x41}, .largest_acked = 1, .expected = 65 },
+        .{ .truncated = &[_]u8{ 0x3F, 0xFF }, .largest_acked = 1, .expected = 64 * 256 - 1 },
+        .{ .truncated = &[_]u8{ 0x00, 0x3F, 0xFF, 0xFF }, .largest_acked = 1, .expected = 64 * 256 * 256 - 1 },
+
+        // Additional restore case where high bits come from the expected window.
+        .{ .truncated = &[_]u8{ 0x27, 0x11 }, .largest_acked = 9_999, .expected = 10_001 },
+    };
+
+    for (vectors) |vector| {
+        const decoded = try PacketNumberUtil.decode(vector.truncated, vector.largest_acked);
+        try std.testing.expectEqual(vector.expected, decoded);
+    }
+}
+
 test "long header decode rejects reserved bits for non-retry" {
     const dcid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
     const scid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
