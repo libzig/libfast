@@ -45,6 +45,55 @@ test "interop lsquic version negotiation low-bit tolerance" {
     try std.testing.expectEqual(core_types.QUIC_VERSION_1, decoded.packet.supported_versions[2]);
 }
 
+test "interop lsquic version negotiation malformed vectors" {
+    const dcid = try core_types.ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const scid = try core_types.ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var buf: [128]u8 = undefined;
+    const vn = packet_mod.VersionNegotiationPacket{
+        .dest_conn_id = dcid,
+        .src_conn_id = scid,
+        .supported_versions = &[_]u32{ 0x00000002, 0x00000003 },
+    };
+    const len = try vn.encode(&buf);
+
+    var versions: [4]u32 = undefined;
+
+    // Fixed bit cleared.
+    var fixed_off = buf;
+    fixed_off[0] &= 0xBF;
+    try std.testing.expectError(error.FixedBitNotSet, packet_mod.VersionNegotiationPacket.decode(fixed_off[0..len], &versions));
+
+    // Non-zero version marker.
+    var wrong_version = buf;
+    std.mem.writeInt(u32, wrong_version[1..5], core_types.QUIC_VERSION_1, .big);
+    try std.testing.expectError(error.InvalidVersion, packet_mod.VersionNegotiationPacket.decode(wrong_version[0..len], &versions));
+
+    // Version list not aligned to 4-byte entries.
+    var malformed_list: [36]u8 = undefined;
+    malformed_list[0] = 0xC0;
+    std.mem.writeInt(u32, malformed_list[1..5], 0, .big);
+    malformed_list[5] = 4;
+    @memcpy(malformed_list[6..10], &[_]u8{ 1, 2, 3, 4 });
+    malformed_list[10] = 4;
+    @memcpy(malformed_list[11..15], &[_]u8{ 5, 6, 7, 8 });
+    malformed_list[15] = 0;
+    malformed_list[16] = 0;
+    malformed_list[17] = 2;
+    try std.testing.expectError(error.InvalidVersion, packet_mod.VersionNegotiationPacket.decode(malformed_list[0..18], &versions));
+
+    // Oversized DCID length.
+    var oversized_cid: [64]u8 = undefined;
+    oversized_cid[0] = 0xC0;
+    std.mem.writeInt(u32, oversized_cid[1..5], 0, .big);
+    oversized_cid[5] = 21;
+    @memset(oversized_cid[6..27], 0xAA);
+    oversized_cid[27] = 4;
+    @memcpy(oversized_cid[28..32], &[_]u8{ 9, 9, 9, 9 });
+    std.mem.writeInt(u32, oversized_cid[32..36], 0x00000001, .big);
+    try std.testing.expectError(error.ConnectionIdTooLong, packet_mod.VersionNegotiationPacket.decode(oversized_cid[0..36], &versions));
+}
+
 test "interop lsquic packet number reconstruction vectors" {
     const vectors = [_]struct {
         truncated: []const u8,
