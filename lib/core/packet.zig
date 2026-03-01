@@ -808,6 +808,37 @@ test "long header decode rejects oversized CID lengths" {
     try std.testing.expectError(error.ConnectionIdTooLong, LongHeader.decode(bad_scid[0..64]));
 }
 
+test "long header decode lsquic-style truncation corpus" {
+    const dcid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 });
+    const scid = try ConnectionId.init(&[_]u8{ 9, 10, 11, 12 });
+
+    var buf: [256]u8 = undefined;
+    const header = LongHeader{
+        .packet_type = .initial,
+        .version = types.QUIC_VERSION_1,
+        .dest_conn_id = dcid,
+        .src_conn_id = scid,
+        .token = "retry-token",
+        .payload_len = 4,
+        .packet_number = 0x1234,
+    };
+    const len = try header.encode(&buf);
+
+    var cut: usize = 0;
+    while (cut < len) : (cut += 1) {
+        try std.testing.expectError(error.UnexpectedEof, LongHeader.decode(buf[0..cut]));
+    }
+
+    const decoded = try LongHeader.decode(buf[0..len]);
+    try std.testing.expectEqual(PacketType.initial, decoded.header.packet_type);
+    try std.testing.expectEqual(@as(u32, types.QUIC_VERSION_1), decoded.header.version);
+    try std.testing.expect(decoded.header.dest_conn_id.eql(&dcid));
+    try std.testing.expect(decoded.header.src_conn_id.eql(&scid));
+    try std.testing.expectEqualStrings("retry-token", decoded.header.token);
+    try std.testing.expectEqual(@as(u64, 4), decoded.header.payload_len);
+    try std.testing.expectEqual(@as(u64, 0x1234), decoded.header.packet_number);
+}
+
 test "short header decode rejects oversized CID length hint" {
     var buf: [64]u8 = [_]u8{0} ** 64;
     buf[0] = 0x40; // short header + fixed bit + pn_len=1
@@ -815,6 +846,28 @@ test "short header decode rejects oversized CID length hint" {
 
     // Provide a decode DCID length greater than QUIC maximum with enough bytes.
     try std.testing.expectError(error.ConnectionIdTooLong, ShortHeader.decode(buf[0..23], 21));
+}
+
+test "short header decode lsquic-style truncation corpus" {
+    const dcid = try ConnectionId.init(&[_]u8{ 1, 3, 5, 7, 9, 11, 13, 15 });
+
+    var buf: [128]u8 = undefined;
+    const header = ShortHeader{
+        .dest_conn_id = dcid,
+        .packet_number = 0x123456,
+        .key_phase = true,
+    };
+    const len = try header.encode(&buf);
+
+    var cut: usize = 0;
+    while (cut < len) : (cut += 1) {
+        try std.testing.expectError(error.UnexpectedEof, ShortHeader.decode(buf[0..cut], dcid.len));
+    }
+
+    const decoded = try ShortHeader.decode(buf[0..len], dcid.len);
+    try std.testing.expect(decoded.header.dest_conn_id.eql(&dcid));
+    try std.testing.expect(decoded.header.key_phase);
+    try std.testing.expectEqual(@as(u64, 0x123456), decoded.header.packet_number);
 }
 
 test "version negotiation decode rejects oversized CID lengths" {
