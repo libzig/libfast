@@ -138,6 +138,56 @@ test "interop lsquic ack sparse range vectors" {
     try std.testing.expectEqual(@as(usize, 256), decoded.frame.ack_ranges.len);
 }
 
+test "interop lsquic ack truncation matrix" {
+    var ranges_buf: [256]u8 = undefined;
+    const ranges_frame = frame_mod.AckFrame{
+        .largest_acked = 600,
+        .ack_delay = 3,
+        .first_ack_range = 5,
+        .ack_ranges = &[_]frame_mod.AckFrame.AckRange{
+            .{ .gap = 1, .ack_range_length = 2 },
+            .{ .gap = 3, .ack_range_length = 4 },
+        },
+        .ecn_counts = null,
+    };
+    const ranges_len = try ranges_frame.encode(&ranges_buf);
+
+    var ack_ranges: [8]frame_mod.AckFrame.AckRange = undefined;
+    var cut: usize = 1;
+    while (cut < ranges_len) : (cut += 1) {
+        try std.testing.expectError(error.UnexpectedEof, frame_mod.AckFrame.decodeWithAckRanges(ranges_buf[0..cut], &ack_ranges));
+    }
+
+    var ecn_buf: [128]u8 = undefined;
+    const ecn_frame = frame_mod.AckFrame{
+        .largest_acked = 9,
+        .ack_delay = 1,
+        .first_ack_range = 0,
+        .ack_ranges = &.{},
+        .ecn_counts = frame_mod.AckFrame.EcnCounts{
+            .ect0_count = 1,
+            .ect1_count = 2,
+            .ecn_ce_count = 3,
+        },
+    };
+    const ecn_len = try ecn_frame.encode(&ecn_buf);
+
+    var no_ecn_buf: [128]u8 = undefined;
+    const no_ecn_frame = frame_mod.AckFrame{
+        .largest_acked = 9,
+        .ack_delay = 1,
+        .first_ack_range = 0,
+        .ack_ranges = &.{},
+        .ecn_counts = null,
+    };
+    const no_ecn_len = try no_ecn_frame.encode(&no_ecn_buf);
+
+    cut = no_ecn_len;
+    while (cut < ecn_len) : (cut += 1) {
+        try std.testing.expectError(error.UnexpectedEof, frame_mod.AckFrame.decode(ecn_buf[0..cut]));
+    }
+}
+
 test "interop lsquic long-header truncation matrix" {
     const dcid = try core_types.ConnectionId.init(&[_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 });
     const scid = try core_types.ConnectionId.init(&[_]u8{ 9, 10, 11, 12 });
@@ -157,6 +207,23 @@ test "interop lsquic long-header truncation matrix" {
     var cut: usize = 0;
     while (cut < len) : (cut += 1) {
         try std.testing.expectError(error.UnexpectedEof, packet_mod.LongHeader.decode(buf[0..cut]));
+    }
+}
+
+test "interop lsquic short-header truncation matrix" {
+    const dcid = try core_types.ConnectionId.init(&[_]u8{ 1, 3, 5, 7, 9, 11, 13, 15 });
+
+    var buf: [128]u8 = undefined;
+    const header = packet_mod.ShortHeader{
+        .dest_conn_id = dcid,
+        .packet_number = 0x123456,
+        .key_phase = true,
+    };
+
+    const len = try header.encode(&buf);
+    var cut: usize = 0;
+    while (cut < len) : (cut += 1) {
+        try std.testing.expectError(error.UnexpectedEof, packet_mod.ShortHeader.decode(buf[0..cut], dcid.len));
     }
 }
 
