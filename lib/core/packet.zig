@@ -775,6 +775,71 @@ test "version negotiation decode rejects invalid wire forms" {
     try std.testing.expectError(error.BufferTooSmall, VersionNegotiationPacket.decode(buf[0..len], &small_versions));
 }
 
+test "long header decode rejects oversized CID lengths" {
+    const dcid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const scid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var buf: [256]u8 = undefined;
+    const header = LongHeader{
+        .packet_type = .initial,
+        .version = types.QUIC_VERSION_1,
+        .dest_conn_id = dcid,
+        .src_conn_id = scid,
+        .token = &.{},
+        .payload_len = 1,
+        .packet_number = 7,
+    };
+    const len = try header.encode(&buf);
+
+    // Oversized DCID length (> 20).
+    var bad_dcid = [_]u8{0} ** 256;
+    @memcpy(bad_dcid[0..len], buf[0..len]);
+    bad_dcid[5] = 21;
+    try std.testing.expectError(error.ConnectionIdTooLong, LongHeader.decode(bad_dcid[0..64]));
+
+    // Oversized SCID length (> 20). Keep DCID valid.
+    var bad_scid = [_]u8{0} ** 256;
+    @memcpy(bad_scid[0..len], buf[0..len]);
+    bad_scid[5] = 4;
+    bad_scid[10] = 21;
+    try std.testing.expectError(error.ConnectionIdTooLong, LongHeader.decode(bad_scid[0..64]));
+}
+
+test "short header decode rejects oversized CID length hint" {
+    var buf: [64]u8 = [_]u8{0} ** 64;
+    buf[0] = 0x40; // short header + fixed bit + pn_len=1
+    buf[22] = 0x01; // packet number byte after 21-byte DCID
+
+    // Provide a decode DCID length greater than QUIC maximum with enough bytes.
+    try std.testing.expectError(error.ConnectionIdTooLong, ShortHeader.decode(buf[0..23], 21));
+}
+
+test "version negotiation decode rejects oversized CID lengths" {
+    var buf: [128]u8 = undefined;
+
+    // VN header: long + fixed, version=0.
+    buf[0] = 0xC0;
+    std.mem.writeInt(u32, buf[1..5], 0, .big);
+
+    // Oversized DCID length triggers ConnectionIdTooLong from ConnectionId.init.
+    buf[5] = 21;
+    @memset(buf[6..27], 0xAA);
+    buf[27] = 4;
+    @memcpy(buf[28..32], &[_]u8{ 1, 2, 3, 4 });
+    std.mem.writeInt(u32, buf[32..36], 0x00000001, .big);
+
+    var versions: [4]u32 = undefined;
+    try std.testing.expectError(error.ConnectionIdTooLong, VersionNegotiationPacket.decode(buf[0..36], &versions));
+
+    // Keep DCID valid and make SCID oversized.
+    buf[5] = 4;
+    @memcpy(buf[6..10], &[_]u8{ 5, 6, 7, 8 });
+    buf[10] = 21;
+    @memset(buf[11..32], 0xBB);
+    std.mem.writeInt(u32, buf[32..36], 0x00000001, .big);
+    try std.testing.expectError(error.ConnectionIdTooLong, VersionNegotiationPacket.decode(buf[0..36], &versions));
+}
+
 test "version negotiation decode accepts randomized low header bits" {
     const dcid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
     const scid = try ConnectionId.init(&[_]u8{ 9, 8, 7, 6 });
