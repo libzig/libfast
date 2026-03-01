@@ -444,6 +444,18 @@ test "RTT stats multiple samples" {
     try std.testing.expectEqual(@as(u64, 100 * time_mod.Duration.MILLISECOND), rtt_stats.min_rtt);
 }
 
+test "RTT stats matches lsquic reference progression" {
+    var rtt_stats = RttStats.init();
+
+    // LSQUIC test_rtt.c vector #1: 1 second sample.
+    rtt_stats.updateRtt(1_000_000, 0);
+    try std.testing.expectEqual(@as(u64, 1_000_000), rtt_stats.smoothed_rtt);
+
+    // LSQUIC test_rtt.c vector #2: 0.5 second sample -> srtt = 937500.
+    rtt_stats.updateRtt(500_000, 0);
+    try std.testing.expectEqual(@as(u64, 937_500), rtt_stats.smoothed_rtt);
+}
+
 test "RTT stats PTO calculation" {
     var rtt_stats = RttStats.init();
     rtt_stats.updateRtt(100 * time_mod.Duration.MILLISECOND, 0);
