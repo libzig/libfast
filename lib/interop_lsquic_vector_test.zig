@@ -429,3 +429,44 @@ test "interop lsquic control-frame truncation matrix" {
         try std.testing.expectError(error.UnexpectedEof, frame_mod.ConnectionCloseFrame.decode(close_buf[0..cut]));
     }
 }
+
+test "interop lsquic-style stream frame generation vectors" {
+    const vectors = [_]struct {
+        frame: frame_mod.StreamFrame,
+        expected: []const u8,
+    }{
+        .{
+            .frame = .{ .stream_id = 0, .offset = 0, .data = "A", .fin = false },
+            .expected = &[_]u8{ 0x0A, 0x00, 0x01, 0x41 },
+        },
+        .{
+            .frame = .{ .stream_id = 3, .offset = 0, .data = "BC", .fin = true },
+            .expected = &[_]u8{ 0x0B, 0x03, 0x02, 0x42, 0x43 },
+        },
+        .{
+            .frame = .{ .stream_id = 1, .offset = 5, .data = "xy", .fin = false },
+            .expected = &[_]u8{ 0x0E, 0x01, 0x05, 0x02, 0x78, 0x79 },
+        },
+        .{
+            .frame = .{ .stream_id = 64, .offset = 0, .data = "zz", .fin = true },
+            .expected = &[_]u8{ 0x0B, 0x40, 0x40, 0x02, 0x7A, 0x7A },
+        },
+        .{
+            .frame = .{ .stream_id = 2, .offset = 0x1234, .data = "Q", .fin = false },
+            .expected = &[_]u8{ 0x0E, 0x02, 0x52, 0x34, 0x01, 0x51 },
+        },
+    };
+
+    for (vectors) |vector| {
+        var buf: [128]u8 = undefined;
+        const len = try vector.frame.encode(&buf);
+        try std.testing.expectEqual(vector.expected.len, len);
+        try std.testing.expectEqualSlices(u8, vector.expected, buf[0..len]);
+
+        const decoded = try frame_mod.StreamFrame.decode(buf[0..len]);
+        try std.testing.expectEqual(vector.frame.stream_id, decoded.frame.stream_id);
+        try std.testing.expectEqual(vector.frame.offset, decoded.frame.offset);
+        try std.testing.expectEqual(vector.frame.fin, decoded.frame.fin);
+        try std.testing.expectEqualSlices(u8, vector.frame.data, decoded.frame.data);
+    }
+}
