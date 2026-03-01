@@ -541,6 +541,32 @@ test "ACK processing with multiple packet numbers" {
     try std.testing.expectEqual(@as(usize, 2), ack_result.acked_packets.items.len);
 }
 
+test "ACK processing ignores duplicate packet numbers in one ACK set" {
+    const allocator = std.testing.allocator;
+
+    var ld = LossDetection.init(allocator);
+    defer ld.deinit();
+
+    const now = time_mod.Instant.now();
+
+    try ld.onPacketSent(.application, SentPacket.init(1, now, 1200, true));
+    try ld.onPacketSent(.application, SentPacket.init(2, now, 1200, true));
+    try ld.onPacketSent(.application, SentPacket.init(3, now, 1200, true));
+
+    // Packet 2 appears twice; it must only be acknowledged once.
+    const acked_numbers = [_]types.PacketNumber{ 2, 2, 3 };
+    var ack_result = try ld.onAckReceivedWithPacketNumbers(.application, 3, 0, now, &acked_numbers);
+    defer ack_result.acked_packets.deinit(allocator);
+    defer ack_result.lost_packets.deinit(allocator);
+
+    try std.testing.expectEqual(@as(?types.PacketNumber, 3), if (ack_result.acked_packet) |p| p.packet_number else null);
+    try std.testing.expectEqual(@as(usize, 2), ack_result.acked_packets.items.len);
+
+    // Only packet 1 remains outstanding.
+    try std.testing.expectEqual(@as(usize, 1), ld.application.sent_packets.items.len);
+    try std.testing.expectEqual(@as(u64, 1), ld.application.sent_packets.items[0].packet_number);
+}
+
 test "RTT ack delay does not underflow below min_rtt" {
     var rtt_stats = RttStats.init();
 
