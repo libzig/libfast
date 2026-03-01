@@ -15,6 +15,7 @@ interop-live:
 ci:
 	zig build test-dual-mode-regression --summary all
 	zig build test --summary all
+	@if [ "$(LIBFAST_RUN_LIVE_INTEROP)" = "1" ]; then ./tools/lsquic_live_interop.sh; else echo "Skipping live LSQUIC interop (set LIBFAST_RUN_LIVE_INTEROP=1 to enable)"; fi
 	zig build -Doptimize=ReleaseFast
 
 install: build
