@@ -456,6 +456,22 @@ test "RTT stats matches lsquic reference progression" {
     try std.testing.expectEqual(@as(u64, 937_500), rtt_stats.smoothed_rtt);
 }
 
+test "RTT ack-delay adjustment uses strict boundary" {
+    var rtt_stats = RttStats.init();
+
+    // First sample sets min_rtt.
+    rtt_stats.updateRtt(1_000_000, 0);
+    try std.testing.expectEqual(@as(u64, 1_000_000), rtt_stats.min_rtt);
+
+    // Exactly min_rtt + ack_delay should not subtract ack_delay.
+    rtt_stats.updateRtt(1_100_000, 100_000);
+    const srtt_at_boundary = rtt_stats.smoothed_rtt;
+
+    // One microsecond above boundary should subtract ack_delay.
+    rtt_stats.updateRtt(1_100_001, 100_000);
+    try std.testing.expect(rtt_stats.smoothed_rtt < srtt_at_boundary);
+}
+
 test "RTT stats PTO calculation" {
     var rtt_stats = RttStats.init();
     rtt_stats.updateRtt(100 * time_mod.Duration.MILLISECOND, 0);
@@ -935,6 +951,25 @@ test "explicit ACK list can omit largest_acked packet" {
     try std.testing.expectEqual(@as(u64, 2), ack.acked_packets.items[0].packet_number);
     // Space largest_acked tracks explicitly acknowledged packet numbers.
     try std.testing.expectEqual(@as(?u64, 2), ld.application.largest_acked);
+}
+
+test "empty explicit ACK list is a no-op for sent history" {
+    const allocator = std.testing.allocator;
+
+    var ld = LossDetection.init(allocator);
+    defer ld.deinit();
+
+    const now = time_mod.Instant.now();
+    try ld.onPacketSent(.application, SentPacket.init(1, now, 1200, true));
+    try ld.onPacketSent(.application, SentPacket.init(2, now, 1200, true));
+
+    var ack = try ld.onAckReceivedWithPacketNumbers(.application, 2, 0, now, &.{});
+    defer ack.acked_packets.deinit(allocator);
+    defer ack.lost_packets.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), ack.acked_packets.items.len);
+    try std.testing.expectEqual(@as(usize, 0), ack.lost_packets.items.len);
+    try std.testing.expectEqual(@as(usize, 2), ld.application.sent_packets.items.len);
 }
 pub const AckResult = struct {
     acked_packet: ?SentPacket,
