@@ -1575,6 +1575,61 @@ test "connection enforces server amplification budget before validation" {
     try std.testing.expect(conn.availableSendBudget() > 500);
 }
 
+test "server amplification budget saturates safely on large received bytes" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initServer(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+
+    conn.max_data_remote = std.math.maxInt(u64);
+    conn.congestion_controller.congestion_window = std.math.maxInt(u64);
+    conn.congestion_controller.bytes_in_flight = 0;
+    conn.data_received = std.math.maxInt(u64);
+    conn.data_sent = 0;
+
+    // Amplification budget path should saturate, not overflow.
+    try std.testing.expectEqual(std.math.maxInt(u64), conn.availableSendBudget());
+}
+
+test "available send budget is minimum of flow congestion amplification" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initServer(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+
+    conn.markEstablished();
+
+    // Configure independent ceilings:
+    // flow budget: 5000 - 1000 = 4000
+    conn.max_data_remote = 5000;
+    conn.data_sent = 1000;
+
+    // congestion budget: 900
+    conn.congestion_controller.congestion_window = 1900;
+    conn.congestion_controller.bytes_in_flight = 1000;
+
+    // amplification budget (server, not validated): 3*700 - 1000 = 1100
+    conn.peer_validated = false;
+    conn.data_received = 700;
+
+    try std.testing.expectEqual(@as(u64, 900), conn.availableSendBudget());
+
+    // Raise congestion budget; amplification should become the bottleneck.
+    conn.congestion_controller.congestion_window = 5000;
+    conn.congestion_controller.bytes_in_flight = 1000;
+    try std.testing.expectEqual(@as(u64, 1100), conn.availableSendBudget());
+
+    // Validate peer; amplification cap disappears, flow should be bottleneck.
+    conn.markPeerValidated();
+    try std.testing.expectEqual(@as(u64, 4000), conn.availableSendBudget());
+}
+
 test "connection ack integrates congestion accounting" {
     const allocator = std.testing.allocator;
 
