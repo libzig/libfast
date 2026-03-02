@@ -702,6 +702,83 @@ test "send control lifecycle stays stable across mixed ACK and loss rounds" {
     try std.testing.expectEqual(@as(usize, 1), ld.application.sent_packets.items.len);
     try std.testing.expectEqual(@as(u64, 3), ld.application.sent_packets.items[0].packet_number);
 }
+
+test "ACK range ordering does not change final acknowledged set" {
+    const allocator = std.testing.allocator;
+
+    var ld_a = LossDetection.init(allocator);
+    defer ld_a.deinit();
+
+    var ld_b = LossDetection.init(allocator);
+    defer ld_b.deinit();
+
+    const now = time_mod.Instant.now();
+
+    var pn: u64 = 1;
+    while (pn <= 8) : (pn += 1) {
+        const packet = SentPacket.init(pn, now, 1200, true);
+        try ld_a.onPacketSent(.application, packet);
+        try ld_b.onPacketSent(.application, packet);
+    }
+
+    const acked_ascending = [_]types.PacketNumber{ 2, 4, 6, 8 };
+    const acked_descending = [_]types.PacketNumber{ 8, 6, 4, 2 };
+
+    var res_a = try ld_a.onAckReceivedWithPacketNumbers(.application, 8, 0, now, &acked_ascending);
+    defer res_a.acked_packets.deinit(allocator);
+    defer res_a.lost_packets.deinit(allocator);
+
+    var res_b = try ld_b.onAckReceivedWithPacketNumbers(.application, 8, 0, now, &acked_descending);
+    defer res_b.acked_packets.deinit(allocator);
+    defer res_b.lost_packets.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 4), res_a.acked_packets.items.len);
+    try std.testing.expectEqual(@as(usize, 4), res_b.acked_packets.items.len);
+
+    // Both flows should end with the same outstanding packets set: 5 and 7.
+    try std.testing.expectEqual(@as(usize, 2), ld_a.application.sent_packets.items.len);
+    try std.testing.expectEqual(@as(usize, 2), ld_b.application.sent_packets.items.len);
+
+    var remaining_a = [_]u64{ ld_a.application.sent_packets.items[0].packet_number, ld_a.application.sent_packets.items[1].packet_number };
+    var remaining_b = [_]u64{ ld_b.application.sent_packets.items[0].packet_number, ld_b.application.sent_packets.items[1].packet_number };
+    std.mem.sort(u64, &remaining_a, {}, std.sort.asc(u64));
+    std.mem.sort(u64, &remaining_b, {}, std.sort.asc(u64));
+
+    try std.testing.expectEqualSlices(u64, &remaining_a, &remaining_b);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 5, 7 }, &remaining_a);
+}
+
+test "ACK duplicate range list remains idempotent across repeated calls" {
+    const allocator = std.testing.allocator;
+
+    var ld = LossDetection.init(allocator);
+    defer ld.deinit();
+
+    const now = time_mod.Instant.now();
+
+    try ld.onPacketSent(.application, SentPacket.init(1, now, 1200, true));
+    try ld.onPacketSent(.application, SentPacket.init(2, now, 1200, true));
+    try ld.onPacketSent(.application, SentPacket.init(3, now, 1200, true));
+    try ld.onPacketSent(.application, SentPacket.init(4, now, 1200, true));
+
+    const acked = [_]types.PacketNumber{ 2, 2, 2, 4, 4 };
+    var first = try ld.onAckReceivedWithPacketNumbers(.application, 4, 0, now, &acked);
+    defer first.acked_packets.deinit(allocator);
+    defer first.lost_packets.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), first.acked_packets.items.len);
+    try std.testing.expectEqual(@as(usize, 0), first.lost_packets.items.len);
+    try std.testing.expectEqual(@as(usize, 2), ld.application.sent_packets.items.len);
+
+    // Replaying the same ACK set should have no further effect.
+    var replay = try ld.onAckReceivedWithPacketNumbers(.application, 4, 0, now, &acked);
+    defer replay.acked_packets.deinit(allocator);
+    defer replay.lost_packets.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), replay.acked_packets.items.len);
+    try std.testing.expectEqual(@as(usize, 0), replay.lost_packets.items.len);
+    try std.testing.expectEqual(@as(usize, 2), ld.application.sent_packets.items.len);
+}
 pub const AckResult = struct {
     acked_packet: ?SentPacket,
     acked_packets: std.ArrayList(SentPacket),
