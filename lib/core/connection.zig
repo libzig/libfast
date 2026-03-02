@@ -2250,6 +2250,36 @@ test "path challenge queues matching path response" {
     try std.testing.expectEqualSlices(u8, &token, &queued.?);
 }
 
+test "path challenge queue preserves FIFO order" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initServer(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+
+    const first = [_]u8{ 1, 1, 1, 1, 1, 1, 1, 1 };
+    const second = [_]u8{ 2, 2, 2, 2, 2, 2, 2, 2 };
+    const third = [_]u8{ 3, 3, 3, 3, 3, 3, 3, 3 };
+
+    try conn.onPathChallenge(first);
+    try conn.onPathChallenge(second);
+    try conn.onPathChallenge(third);
+
+    const pop1 = conn.popPathResponse();
+    const pop2 = conn.popPathResponse();
+    const pop3 = conn.popPathResponse();
+
+    try std.testing.expect(pop1 != null);
+    try std.testing.expect(pop2 != null);
+    try std.testing.expect(pop3 != null);
+    try std.testing.expectEqualSlices(u8, &first, &pop1.?);
+    try std.testing.expectEqualSlices(u8, &second, &pop2.?);
+    try std.testing.expectEqualSlices(u8, &third, &pop3.?);
+    try std.testing.expect(conn.popPathResponse() == null);
+}
+
 test "path response validates peer and lifts amplification cap" {
     const allocator = std.testing.allocator;
 
@@ -2270,4 +2300,35 @@ test "path response validates peer and lifts amplification cap" {
     try std.testing.expect(ok);
     try std.testing.expect(conn.peer_validated);
     try std.testing.expect(conn.availableSendBudget() > 3000);
+}
+
+test "path response mismatch keeps peer unvalidated" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initServer(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+
+    conn.updateDataReceived(1000);
+    const capped_budget = conn.availableSendBudget();
+    try std.testing.expectEqual(@as(u64, 3000), capped_budget);
+
+    const expected = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    const wrong = [_]u8{ 8, 7, 6, 5, 4, 3, 2, 1 };
+    conn.beginPathValidation(expected);
+    try std.testing.expect(!conn.peer_validated);
+
+    const ok = conn.onPathResponse(wrong);
+    try std.testing.expect(!ok);
+    try std.testing.expect(!conn.peer_validated);
+    try std.testing.expect(conn.expected_path_response != null);
+    try std.testing.expectEqual(capped_budget, conn.availableSendBudget());
+
+    // Correct token should still validate afterward.
+    const ok2 = conn.onPathResponse(expected);
+    try std.testing.expect(ok2);
+    try std.testing.expect(conn.peer_validated);
+    try std.testing.expect(conn.expected_path_response == null);
 }
