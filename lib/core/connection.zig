@@ -1839,6 +1839,62 @@ test "connection schedules PTO probe" {
     try std.testing.expect(conn.pto_count > 0);
 }
 
+test "connection ignores PTO trigger before deadline" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+    conn.markEstablished();
+
+    conn.trackPacketSent(1200, true);
+    const deadline = conn.next_pto_at.?;
+
+    conn.onPtoTimeout(deadline.sub(1));
+
+    try std.testing.expectEqual(@as(u32, 0), conn.pto_count);
+    try std.testing.expect(conn.popRetransmission() == null);
+    try std.testing.expectEqual(deadline.micros, conn.next_pto_at.?.micros);
+}
+
+test "loss retransmissions queue before PTO probe" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+    conn.markEstablished();
+
+    var i: usize = 0;
+    while (i < 8) : (i += 1) {
+        conn.trackPacketSent(1200, true);
+    }
+
+    // Ack newest packet, which creates threshold-based loss retransmissions.
+    conn.processAckDetailed(7, 0);
+
+    const deadline = conn.next_pto_at.?;
+    conn.onPtoTimeout(deadline.add(1));
+
+    var saw_probe = false;
+    var non_probe_count: usize = 0;
+
+    while (conn.popRetransmission()) |req| {
+        if (req.is_probe) {
+            saw_probe = true;
+            break;
+        }
+        non_probe_count += 1;
+    }
+
+    try std.testing.expect(non_probe_count > 0);
+    try std.testing.expect(saw_probe);
+}
+
 test "pto counter resets when acked packet is in flight" {
     const allocator = std.testing.allocator;
 
