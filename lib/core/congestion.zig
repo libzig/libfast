@@ -494,3 +494,54 @@ test "Congestion accounting saturates bytes_in_flight on over-ack and over-loss"
     // Minimum threshold enforcement still holds after saturation path.
     try std.testing.expect(cc.ssthresh >= 2 * mtu);
 }
+
+test "Recovery exit state selects slow start when cwnd below ssthresh" {
+    const mtu = 1200;
+    var cc = CongestionController.init(mtu);
+
+    // Enter recovery and then make cwnd smaller than ssthresh before exit.
+    cc.onPacketsLost(0, 10);
+    try std.testing.expectEqual(CongestionState.recovery, cc.state);
+
+    cc.congestion_window = 4000;
+    cc.ssthresh = 6000;
+
+    // ACK after recovery_end_packet exits recovery.
+    cc.onPacketAcked(0, 11);
+    try std.testing.expectEqual(CongestionState.slow_start, cc.state);
+    try std.testing.expectEqual(@as(?u64, null), cc.recovery_end_packet);
+}
+
+test "Recovery exit state selects congestion avoidance when cwnd reaches ssthresh" {
+    const mtu = 1200;
+    var cc = CongestionController.init(mtu);
+
+    cc.onPacketsLost(0, 20);
+    try std.testing.expectEqual(CongestionState.recovery, cc.state);
+
+    cc.congestion_window = 7000;
+    cc.ssthresh = 7000;
+
+    cc.onPacketAcked(0, 21);
+    try std.testing.expectEqual(CongestionState.congestion_avoidance, cc.state);
+    try std.testing.expectEqual(@as(?u64, null), cc.recovery_end_packet);
+}
+
+test "Available window saturates correctly around boundary" {
+    const mtu = 1200;
+    var cc = CongestionController.init(mtu);
+
+    const cwnd = cc.congestion_window;
+    cc.onPacketSent(cwnd - 1);
+    try std.testing.expect(cc.canSend());
+    try std.testing.expectEqual(@as(u64, 1), cc.availableWindow());
+
+    cc.onPacketSent(1);
+    try std.testing.expect(!cc.canSend());
+    try std.testing.expectEqual(@as(u64, 0), cc.availableWindow());
+
+    // Over-send still reports zero available window.
+    cc.onPacketSent(100);
+    try std.testing.expect(!cc.canSend());
+    try std.testing.expectEqual(@as(u64, 0), cc.availableWindow());
+}
