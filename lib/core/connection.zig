@@ -1945,6 +1945,45 @@ test "ack-eliciting send refreshes PTO deadline" {
     try std.testing.expect(second_deadline.isAfter(first_deadline) or second_deadline.micros != first_deadline.micros);
 }
 
+test "non-ack-eliciting send does not refresh PTO deadline" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+    conn.markEstablished();
+
+    conn.trackPacketSent(1200, true);
+    const deadline = conn.next_pto_at.?;
+
+    conn.trackPacketSent(100, false);
+    try std.testing.expectEqual(deadline.micros, conn.next_pto_at.?.micros);
+}
+
+test "PTO probe size follows max_datagram_size" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+    conn.markEstablished();
+
+    conn.congestion_controller.max_datagram_size = 1350;
+    conn.trackPacketSent(1200, true);
+
+    const deadline = conn.next_pto_at.?;
+    conn.onPtoTimeout(deadline.add(1));
+
+    const probe = conn.popRetransmission();
+    try std.testing.expect(probe != null);
+    try std.testing.expect(probe.?.is_probe);
+    try std.testing.expectEqual(@as(usize, 1350), probe.?.size);
+}
+
 test "pto counter resets when acked packet is in flight" {
     const allocator = std.testing.allocator;
 
