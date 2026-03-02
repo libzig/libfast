@@ -1999,6 +1999,37 @@ test "loss retransmission queue preserves round ordering across ACK rounds" {
     try std.testing.expect(saw_additional);
 }
 
+test "loss retransmission bookkeeping preserves original packet sizes" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+    conn.markEstablished();
+
+    conn.trackPacketSent(777, true); // pn 0
+    conn.trackPacketSent(888, true); // pn 1
+    conn.trackPacketSent(999, true); // pn 2
+    conn.trackPacketSent(1111, true); // pn 3
+    conn.trackPacketSent(1222, true); // pn 4
+
+    // ACK largest packet to force threshold loss scheduling for older packets.
+    conn.processAckDetailed(4, 0);
+
+    var saw_777 = false;
+    while (conn.popRetransmission()) |req| {
+        try std.testing.expect(!req.is_probe);
+        if (req.packet_number == 0) {
+            saw_777 = true;
+            try std.testing.expectEqual(@as(usize, 777), req.size);
+        }
+    }
+
+    try std.testing.expect(saw_777);
+}
+
 test "connection schedules PTO probe" {
     const allocator = std.testing.allocator;
 
@@ -2375,6 +2406,41 @@ test "recovery remains stable under mixed loss and timeout stress" {
         try std.testing.expect(conn.congestion_controller.getCongestionWindow() >= 2 * conn.congestion_controller.max_datagram_size);
         try std.testing.expect(conn.availableSendBudget() <= conn.max_data_remote);
         try std.testing.expect(conn.pto_count <= round + 1);
+    }
+}
+
+test "send-control style lifecycle keeps stable invariants under mixed rounds" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+    conn.markEstablished();
+
+    var round: usize = 0;
+    while (round < 8) : (round += 1) {
+        conn.trackPacketSent(800 + round * 10, true);
+        conn.trackPacketSent(900 + round * 10, true);
+        conn.trackPacketSent(1000 + round * 10, true);
+
+        // Acknowledge latest to drive ACK/loss interplay.
+        const largest = conn.next_packet_number - 1;
+        conn.processAckDetailed(largest, 0);
+
+        if (conn.next_pto_at) |deadline| {
+            conn.onPtoTimeout(deadline.add(1));
+        }
+
+        // Drain queue and verify bookkeeping invariants.
+        while (conn.popRetransmission()) |req| {
+            try std.testing.expect(req.size > 0);
+        }
+
+        try std.testing.expect(conn.congestion_controller.getCongestionWindow() >= 2 * conn.congestion_controller.max_datagram_size);
+        try std.testing.expect(conn.congestion_controller.getBytesInFlight() <= conn.congestion_controller.getCongestionWindow());
+        try std.testing.expect(conn.availableSendBudget() <= conn.max_data_remote);
     }
 }
 

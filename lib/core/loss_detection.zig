@@ -862,6 +862,28 @@ test "maxObservedPacketNumber combines sent and acknowledged history" {
     try std.testing.expectEqual(@as(?u64, 9), ld.maxObservedPacketNumber(.application));
 }
 
+test "sent history drains deterministically under full ACK sweep" {
+    const allocator = std.testing.allocator;
+
+    var ld = LossDetection.init(allocator);
+    defer ld.deinit();
+
+    const now = time_mod.Instant.now();
+    var pn: u64 = 0;
+    while (pn < 6) : (pn += 1) {
+        try ld.onPacketSent(.application, SentPacket.init(pn, now, 1200, true));
+    }
+
+    var acked = [_]types.PacketNumber{ 0, 1, 2, 3, 4, 5 };
+    var ack = try ld.onAckReceivedWithPacketNumbers(.application, 5, 0, now, &acked);
+    defer ack.acked_packets.deinit(allocator);
+    defer ack.lost_packets.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 6), ack.acked_packets.items.len);
+    try std.testing.expectEqual(@as(usize, 0), ld.application.sent_packets.items.len);
+    try std.testing.expectEqual(@as(?u64, 5), ld.maxObservedPacketNumber(.application));
+}
+
 test "explicit ACK list can omit largest_acked packet" {
     const allocator = std.testing.allocator;
 
