@@ -1229,6 +1229,29 @@ test "connection applies MAX_STREAMS updates" {
     try std.testing.expectEqual(@as(u64, 4), conn.streams.max_local_streams_bidi);
 }
 
+test "connection ignores decreasing MAX_STREAMS updates" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+
+    conn.streams.setLocalOpenLimits(2, 3);
+
+    conn.onMaxStreams(true, 10);
+    conn.onMaxStreams(false, 8);
+    try std.testing.expectEqual(@as(u64, 10), conn.streams.max_local_streams_bidi);
+    try std.testing.expectEqual(@as(u64, 8), conn.streams.max_local_streams_uni);
+
+    // Decreasing values must be ignored.
+    conn.onMaxStreams(true, 4);
+    conn.onMaxStreams(false, 6);
+    try std.testing.expectEqual(@as(u64, 10), conn.streams.max_local_streams_bidi);
+    try std.testing.expectEqual(@as(u64, 8), conn.streams.max_local_streams_uni);
+}
+
 test "connection applies MAX_STREAM_DATA updates" {
     const allocator = std.testing.allocator;
 
@@ -1243,6 +1266,30 @@ test "connection applies MAX_STREAM_DATA updates" {
     const before = conn.getStream(sid).?.max_stream_data_remote;
     conn.onMaxStreamData(sid, before + 5000);
     try std.testing.expectEqual(before + 5000, conn.getStream(sid).?.max_stream_data_remote);
+}
+
+test "connection ignores decreasing MAX_STREAM_DATA and unknown stream updates" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+    conn.markEstablished();
+
+    const sid = try conn.openStream(true);
+    const before = conn.getStream(sid).?.max_stream_data_remote;
+
+    conn.onMaxStreamData(sid, before - 1);
+    try std.testing.expectEqual(before, conn.getStream(sid).?.max_stream_data_remote);
+
+    conn.onMaxStreamData(sid, before + 1024);
+    try std.testing.expectEqual(before + 1024, conn.getStream(sid).?.max_stream_data_remote);
+
+    // Unknown stream ID should be ignored and must not affect existing stream.
+    conn.onMaxStreamData(999, before + 99999);
+    try std.testing.expectEqual(before + 1024, conn.getStream(sid).?.max_stream_data_remote);
 }
 
 test "connection tracks peer blocked frame observations" {
