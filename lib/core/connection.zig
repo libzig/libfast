@@ -1918,6 +1918,26 @@ test "pto counter resets when acked packet is in flight" {
     try std.testing.expect(conn.next_pto_at != null);
 }
 
+test "pto counter does not reset when ACK does not match inflight packet" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+    conn.markEstablished();
+
+    conn.trackPacketSent(1200, true); // pn 0
+    const original_deadline = conn.next_pto_at.?;
+    conn.onPtoTimeout(original_deadline.add(1));
+    try std.testing.expect(conn.pto_count > 0);
+
+    // ACK for unsent packet number should not reset PTO counter.
+    conn.processAckDetailed(99, 0);
+    try std.testing.expect(conn.pto_count > 0);
+}
+
 test "non ack-eliciting packet does not arm PTO" {
     const allocator = std.testing.allocator;
 
@@ -1994,6 +2014,43 @@ test "pto backoff grows and remains bounded" {
 
     // Guardrail: bounded PTO growth for this harness.
     try std.testing.expect(conn.pto_count <= 5);
+}
+
+test "pto backoff exponent caps after threshold" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+    conn.markEstablished();
+
+    conn.trackPacketSent(1200, true);
+
+    var deadline = conn.next_pto_at.?;
+    var prev_increment: ?u64 = null;
+    var saturated_increment: ?u64 = null;
+
+    var i: u32 = 0;
+    while (i < 24) : (i += 1) {
+        conn.onPtoTimeout(deadline.add(1));
+        const next = conn.next_pto_at.?;
+        const increment = next.durationSince(deadline);
+
+        if (conn.pto_count == 20) {
+            saturated_increment = increment;
+        } else if (conn.pto_count > 20) {
+            try std.testing.expect(saturated_increment != null);
+            try std.testing.expectEqual(saturated_increment.?, increment);
+        }
+
+        prev_increment = increment;
+        deadline = next;
+    }
+
+    try std.testing.expect(prev_increment != null);
+    try std.testing.expectEqual(@as(u32, 24), conn.pto_count);
 }
 
 test "recovery remains stable under mixed loss and timeout stress" {
