@@ -1994,6 +1994,24 @@ test "connection ignores PTO trigger before deadline" {
     try std.testing.expectEqual(deadline.micros, conn.next_pto_at.?.micros);
 }
 
+test "onPtoTimeout is no-op when deadline is not armed" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initClient(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+    conn.markEstablished();
+
+    try std.testing.expect(conn.next_pto_at == null);
+    conn.onPtoTimeout(time.Instant.now());
+
+    try std.testing.expectEqual(@as(u32, 0), conn.pto_count);
+    try std.testing.expect(conn.next_pto_at == null);
+    try std.testing.expect(conn.popRetransmission() == null);
+}
+
 test "loss retransmissions queue before PTO probe" {
     const allocator = std.testing.allocator;
 
@@ -2409,6 +2427,34 @@ test "path response mismatch keeps peer unvalidated" {
     // Correct token should still validate afterward.
     const ok2 = conn.onPathResponse(expected);
     try std.testing.expect(ok2);
+    try std.testing.expect(conn.peer_validated);
+    try std.testing.expect(conn.expected_path_response == null);
+}
+
+test "beginPathValidation replaces pending expected response token" {
+    const allocator = std.testing.allocator;
+
+    const local_cid = try ConnectionId.init(&[_]u8{ 1, 2, 3, 4 });
+    const remote_cid = try ConnectionId.init(&[_]u8{ 5, 6, 7, 8 });
+
+    var conn = try Connection.initServer(allocator, .tls, local_cid, remote_cid);
+    defer conn.deinit();
+
+    const old_token = [_]u8{ 1, 1, 1, 1, 1, 1, 1, 1 };
+    const new_token = [_]u8{ 9, 9, 9, 9, 9, 9, 9, 9 };
+    conn.beginPathValidation(old_token);
+    conn.beginPathValidation(new_token);
+
+    try std.testing.expect(!conn.peer_validated);
+    try std.testing.expect(conn.expected_path_response != null);
+    try std.testing.expectEqualSlices(u8, &new_token, &conn.expected_path_response.?);
+
+    // Old token must no longer validate.
+    try std.testing.expect(!conn.onPathResponse(old_token));
+    try std.testing.expect(!conn.peer_validated);
+
+    // New token validates and clears expectation.
+    try std.testing.expect(conn.onPathResponse(new_token));
     try std.testing.expect(conn.peer_validated);
     try std.testing.expect(conn.expected_path_response == null);
 }
