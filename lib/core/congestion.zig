@@ -417,3 +417,31 @@ test "Congestion lifecycle remains stable across recovery and reset" {
     try std.testing.expect(!cc.canSend());
     try std.testing.expectEqual(@as(u64, 0), cc.availableWindow());
 }
+
+test "Congestion avoidance growth is single-step per ACK event" {
+    const mtu = 1200;
+    var cc = CongestionController.init(mtu);
+
+    cc.state = .congestion_avoidance;
+    cc.ssthresh = cc.congestion_window;
+    cc.acked_bytes_in_window = 0;
+
+    const cwnd0 = cc.congestion_window;
+
+    cc.onPacketAcked(4000, 1);
+    try std.testing.expectEqual(cwnd0, cc.congestion_window);
+    try std.testing.expectEqual(@as(u64, 4000), cc.acked_bytes_in_window);
+
+    cc.onPacketAcked(7000, 2);
+    try std.testing.expectEqual(cwnd0, cc.congestion_window);
+    try std.testing.expectEqual(@as(u64, 11000), cc.acked_bytes_in_window);
+
+    cc.onPacketAcked(1000, 3);
+    try std.testing.expectEqual(cwnd0 + mtu, cc.congestion_window);
+    try std.testing.expectEqual(@as(u64, 0), cc.acked_bytes_in_window);
+
+    const cwnd1 = cc.congestion_window;
+    cc.onPacketAcked(24000, 4);
+    try std.testing.expectEqual(cwnd1 + mtu, cc.congestion_window);
+    try std.testing.expectEqual(@as(u64, 0), cc.acked_bytes_in_window);
+}
