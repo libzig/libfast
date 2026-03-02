@@ -531,3 +531,68 @@ test "interop lsquic-style packet buffer capacity ladder long header" {
     try std.testing.expectEqualStrings("tok", decoded.header.token);
     try std.testing.expectEqual(@as(u64, 0x1234), decoded.header.packet_number);
 }
+
+test "interop lsquic-style packet bookkeeping vectors" {
+    const dcid = try core_types.ConnectionId.init(&[_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 });
+    const scid = try core_types.ConnectionId.init(&[_]u8{ 9, 10, 11, 12 });
+
+    const long_vectors = [_]struct {
+        payload_len: u64,
+        packet_number: u64,
+        expected_decoded_packet_number: u64,
+        token: []const u8,
+    }{
+        .{ .payload_len = 1, .packet_number = 0x01, .expected_decoded_packet_number = 0x01, .token = &.{} },
+        .{ .payload_len = 63, .packet_number = 0x1234, .expected_decoded_packet_number = 0x1234, .token = "t" },
+        .{ .payload_len = 64, .packet_number = 0x01020304, .expected_decoded_packet_number = 0x01020304, .token = "tok" },
+        // Long-header packet number wire length is max 4 bytes; high bits are not carried.
+        .{ .payload_len = 4096, .packet_number = 0x0102030405060708, .expected_decoded_packet_number = 0x05060708, .token = "retry-token" },
+    };
+
+    for (long_vectors) |vector| {
+        var buf: [256]u8 = undefined;
+        const header = packet_mod.LongHeader{
+            .packet_type = .initial,
+            .version = core_types.QUIC_VERSION_1,
+            .dest_conn_id = dcid,
+            .src_conn_id = scid,
+            .token = vector.token,
+            .payload_len = vector.payload_len,
+            .packet_number = vector.packet_number,
+        };
+
+        const len = try header.encode(&buf);
+        const decoded = try packet_mod.LongHeader.decode(buf[0..len]);
+        try std.testing.expectEqual(len, decoded.consumed);
+        try std.testing.expect(decoded.header.dest_conn_id.eql(&dcid));
+        try std.testing.expect(decoded.header.src_conn_id.eql(&scid));
+        try std.testing.expectEqual(vector.payload_len, decoded.header.payload_len);
+        try std.testing.expectEqual(vector.expected_decoded_packet_number, decoded.header.packet_number);
+        try std.testing.expectEqualSlices(u8, vector.token, decoded.header.token);
+    }
+
+    const short_vectors = [_]struct {
+        packet_number: u64,
+        key_phase: bool,
+    }{
+        .{ .packet_number = 0x01, .key_phase = false },
+        .{ .packet_number = 0x1234, .key_phase = true },
+        .{ .packet_number = 0x01020304, .key_phase = false },
+    };
+
+    for (short_vectors) |vector| {
+        var buf: [128]u8 = undefined;
+        const header = packet_mod.ShortHeader{
+            .dest_conn_id = dcid,
+            .packet_number = vector.packet_number,
+            .key_phase = vector.key_phase,
+        };
+
+        const len = try header.encode(&buf);
+        const decoded = try packet_mod.ShortHeader.decode(buf[0..len], dcid.len);
+        try std.testing.expectEqual(len, decoded.consumed);
+        try std.testing.expect(decoded.header.dest_conn_id.eql(&dcid));
+        try std.testing.expectEqual(vector.packet_number, decoded.header.packet_number);
+        try std.testing.expectEqual(vector.key_phase, decoded.header.key_phase);
+    }
+}
