@@ -3,6 +3,11 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const libsafe_dep = b.dependency("libsafe", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const libsafe_module = libsafe_dep.module("libsafe");
 
     // Create the libfast module
     const libfast_module = b.createModule(.{
@@ -10,13 +15,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    libfast_module.addImport("libsafe", libsafe_module);
 
     // Export the module so it can be used by other projects
-    _ = b.addModule("libfast", .{
+    const exported = b.addModule("libfast", .{
         .root_source_file = b.path("lib/libfast.zig"),
         .target = target,
         .optimize = optimize,
     });
+    exported.addImport("libsafe", libsafe_module);
 
     // Build the library
     const lib = b.addLibrary(.{

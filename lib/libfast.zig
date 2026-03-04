@@ -44,23 +44,26 @@ pub const buffer = @import("utils/buffer.zig");
 pub const time = @import("utils/time.zig");
 
 // Crypto - SSH/QUIC
-pub const ssh_obfuscation = @import("crypto/ssh/obfuscation.zig");
+pub const ssh_obfuscation = @import("libsafe").ssh_obfuscation;
 pub const ssh_init = @import("crypto/ssh/init.zig");
 pub const ssh_reply = @import("crypto/ssh/reply.zig");
 pub const ssh_cancel = @import("crypto/ssh/cancel.zig");
-pub const ssh_kex = @import("crypto/ssh/kex_methods.zig");
-pub const ssh_secrets = @import("crypto/ssh/secret_derivation.zig");
+pub const ssh_kex = @import("libsafe").ssh_kex;
+pub const ssh_secrets = @import("libsafe").ssh_secrets;
+pub const ssh_ecdh = @import("libsafe").ssh_ecdh;
+pub const ssh_signature = @import("libsafe").ssh_signature;
+pub const ssh_hostkey = @import("libsafe").ssh_hostkey;
 
 // Crypto - Common
-pub const crypto = @import("crypto/crypto.zig");
-pub const aead = @import("crypto/aead.zig");
-pub const keys = @import("crypto/keys.zig");
-pub const header_protection = @import("crypto/header_protection.zig");
+pub const crypto = @import("libsafe").crypto;
+pub const aead = @import("libsafe").aead;
+pub const keys = @import("libsafe").keys;
+pub const header_protection = @import("libsafe").header_protection;
 
 // Crypto - TLS
-pub const tls_handshake = @import("crypto/tls/handshake.zig");
-pub const tls_key_schedule = @import("crypto/tls/key_schedule.zig");
-pub const tls_context = @import("crypto/tls/tls_context.zig");
+pub const tls_handshake = @import("libsafe").tls_handshake;
+pub const tls_key_schedule = @import("libsafe").tls_key_schedule;
+pub const tls_context = @import("libsafe").tls_context;
 
 // Transport
 pub const udp = @import("transport/udp.zig");

@@ -2,7 +2,10 @@
     .name = .libfast,
     .version = "0.0.13",
     .dependencies = .{
-        // zquic removed - building custom minimal QUIC for SSH/QUIC
+        .libsafe = .{
+            .url = "git+https://github.com/libzig/libsafe?ref=0.0.6",
+            .hash = "libsafe-0.0.6-ucZASCbdAQDW8O1fuukZNTR3m1reR2QCx15FbaEvh75_",
+        },
     },
     .paths = .{
         "build.zig",
@@ -11,5 +14,5 @@
         "examples",
         "lib",
     },
-    .fingerprint = 0x195115882e60ff19,
+    .fingerprint = 0x19511588a5548c06,
 }
