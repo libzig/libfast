@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.15] - 2026-03-04
+
+### <!-- 3 -->📚 Documentation
+
+- Refactor README and move extensive guides to docs/
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update libsafe dependency to 0.0.7
+- Switch libfast libsafe dependency to local path
+
 ## [0.0.14] - 2026-03-04
 
 ### <!-- 2 -->🚜 Refactor
