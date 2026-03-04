@@ -1,5 +1,5 @@
 const std = @import("std");
-const crypto_mod = @import("../crypto/crypto.zig");
+const crypto_mod = @import("libsafe").crypto;
 const types = @import("../core/types.zig");
 
 /// QUIC configuration for connection setup

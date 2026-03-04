@@ -4,13 +4,13 @@ const types_mod = @import("types.zig");
 const conn_internal = @import("../core/connection.zig");
 const stream_internal = @import("../core/stream.zig");
 const udp_mod = @import("../transport/udp.zig");
-const crypto_mod = @import("../crypto/crypto.zig");
+const crypto_mod = @import("libsafe").crypto;
 const packet_mod = @import("../core/packet.zig");
 const frame_mod = @import("../core/frame.zig");
 const core_types = @import("../core/types.zig");
 const transport_params_mod = @import("../core/transport_params.zig");
-const tls_context_mod = @import("../crypto/tls/tls_context.zig");
-const tls_handshake_mod = @import("../crypto/tls/handshake.zig");
+const tls_context_mod = @import("libsafe").tls_context;
+const tls_handshake_mod = @import("libsafe").tls_handshake;
 const varint = @import("../utils/varint.zig");
 const time_mod = @import("../utils/time.zig");
 
